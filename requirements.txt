@@ -1,0 +1,34 @@
+# Core ML/Audio
+torch>=2.0.0
+torchaudio>=2.0.0
+transformers>=4.35.0
+librosa>=0.10.0
+soundfile>=0.12.0
+sounddevice>=0.4.6
+
+# F0 extraction
+crepe>=0.0.16
+numpy>=1.24.0
+
+# TTS for synthetic data
+edge-tts>=6.1.0
+
+# Forced alignment
+praatio>=6.0.0
+tgt>=1.4.4
+
+# VAD
+silero-vad>=4.0.0
+onnxruntime>=1.16.0
+
+# Visualization
+matplotlib>=3.7.0
+rich>=13.0.0
+
+# Config and utilities
+pyyaml>=6.0.0
+tqdm>=4.65.0
+pandas>=2.0.0
+
+# Development
+pytest>=7.0.0

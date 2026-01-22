@@ -1,0 +1,108 @@
+# Mandarin Tone Coach - Default Configuration
+
+# Paths
+paths:
+  data_dir: data
+  raw_dir: data/raw
+  processed_dir: data/processed
+  synthetic_dir: data/synthetic
+  alignments_dir: data/alignments
+  checkpoints_dir: checkpoints
+  logs_dir: logs
+
+# Data processing
+data:
+  sample_rate: 16000
+  min_duration: 0.05  # Minimum syllable duration in seconds
+  max_duration: 1.0   # Maximum syllable duration in seconds
+  padding: 0.02       # Padding around segments in seconds
+
+  # Train/val/test split ratios
+  train_ratio: 0.8
+  val_ratio: 0.1
+  test_ratio: 0.1
+
+# Synthetic data generation
+synthetic:
+  samples_per_tone: 500
+  voices:
+    - zh-CN-XiaoxiaoNeural
+    - zh-CN-YunxiNeural
+    - zh-CN-YunjianNeural
+    - zh-CN-XiaoyiNeural
+    - zh-CN-YunyangNeural
+
+# MMS Encoder
+mms:
+  model_name: facebook/mms-300m
+  prosody_layers: [8, 9, 10, 11, 12]
+  phonetic_layers: [15, 16, 17]
+  # Light encoder uses only layers 12 and 16 for speed
+  use_light_encoder: true
+
+# F0 Extraction
+f0:
+  method: pyin  # 'pyin' for real-time, 'crepe' for training
+  hop_length: 160  # 10ms at 16kHz
+  fmin: 50.0
+  fmax: 500.0
+  crepe_model: tiny  # For CREPE: tiny, small, medium, large, full
+
+# FiLM Fusion
+fusion:
+  hidden_dim: 64
+  num_layers: 1
+
+# Classifier
+classifier:
+  hidden_dim: 256
+  num_classes: 5
+  dropout: 0.3
+  use_f0: true
+  use_attention_pooling: true
+
+# Training
+training:
+  batch_size: 32
+  num_epochs: 50
+  learning_rate: 0.0001
+  weight_decay: 0.00001
+  patience: 10  # Early stopping patience
+  gradient_clip: 1.0
+
+  # Learning rate scheduler
+  scheduler:
+    type: reduce_on_plateau
+    factor: 0.5
+    patience: 5
+    mode: max  # Maximize validation accuracy
+
+  # Data augmentation
+  augmentation:
+    time_stretch: false
+    pitch_shift: false
+    noise: false
+
+# VAD (Voice Activity Detection)
+vad:
+  threshold: 0.5
+  min_speech_duration_ms: 200
+  min_silence_duration_ms: 100
+  max_speech_duration_ms: 5000
+  speech_pad_ms: 50
+  window_size_samples: 512
+
+# Real-time Pipeline
+realtime:
+  chunk_size: 512  # Audio chunk size in samples
+  target_latency_ms: 300
+
+# Evaluation
+evaluation:
+  batch_size: 64
+
+# Logging
+logging:
+  level: INFO
+  tensorboard: true
+  wandb: false
