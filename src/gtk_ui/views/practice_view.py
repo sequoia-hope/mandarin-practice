@@ -169,8 +169,18 @@ class PracticeView(Gtk.Box):
         """Get evaluator instance, creating if needed."""
         if self._evaluator is None:
             try:
+                import os
                 from ...coach.evaluator import Evaluator
-                self._evaluator = Evaluator(lazy_load=True)
+
+                # Get ASR backend from environment (set by run_gtk.py)
+                asr_backend = os.environ.get("TONE_COACH_ASR_BACKEND", "both")
+                use_asr = asr_backend != "none"
+
+                self._evaluator = Evaluator(
+                    lazy_load=True,
+                    use_asr=use_asr,
+                    asr_backend=asr_backend,
+                )
             except Exception as e:
                 print(f"[PracticeView] Failed to load Evaluator: {e}")
         return self._evaluator

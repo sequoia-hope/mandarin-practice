@@ -126,8 +126,9 @@ class ToneResultCard(Gtk.Box):
 
     def __init__(self):
         super().__init__(
-            orientation=Gtk.Orientation.VERTICAL,
-            spacing=8,
+            orientation=Gtk.Orientation.HORIZONTAL,
+            spacing=12,
+            halign=Gtk.Align.CENTER,
         )
 
         self.set_margin_top(8)
@@ -135,29 +136,24 @@ class ToneResultCard(Gtk.Box):
         self.set_margin_start(8)
         self.set_margin_end(8)
 
-        # Results header
-        self._header = Gtk.Label(label="Results")
-        self._header.add_css_class("caption")
-        self._header.set_xalign(0)
-        self.append(self._header)
+        # Syllable results container (horizontal box instead of flow)
+        self._results_box = Gtk.Box(
+            orientation=Gtk.Orientation.HORIZONTAL,
+            spacing=6,
+        )
+        self.append(self._results_box)
 
-        # Syllable results container
-        self._results_flow = Gtk.FlowBox()
-        self._results_flow.set_selection_mode(Gtk.SelectionMode.NONE)
-        self._results_flow.set_homogeneous(True)
-        self._results_flow.set_max_children_per_line(10)
-        self._results_flow.set_min_children_per_line(1)
-        self._results_flow.set_column_spacing(8)
-        self._results_flow.set_row_spacing(8)
-        self.append(self._results_flow)
+        # Separator
+        self._sep1 = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
+        self._sep1.set_margin_start(4)
+        self._sep1.set_margin_end(4)
+        self.append(self._sep1)
 
         # Transcription display (what ASR heard) - characters + pinyin
         self._transcription_box = Gtk.Box(
             orientation=Gtk.Orientation.HORIZONTAL,
             spacing=4,
-            halign=Gtk.Align.CENTER,
         )
-        self._transcription_box.set_margin_top(4)
         self.append(self._transcription_box)
 
         self._heard_label = Gtk.Label(label="Heard:")
@@ -172,13 +168,17 @@ class ToneResultCard(Gtk.Box):
         self._transcription_pinyin.add_css_class("dim-label")
         self._transcription_box.append(self._transcription_pinyin)
 
+        # Separator
+        self._sep2 = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
+        self._sep2.set_margin_start(4)
+        self._sep2.set_margin_end(4)
+        self.append(self._sep2)
+
         # Score summary box - horizontal inline
         self._score_box = Gtk.Box(
             orientation=Gtk.Orientation.HORIZONTAL,
             spacing=12,
-            halign=Gtk.Align.CENTER,
         )
-        self._score_box.set_margin_top(4)
         self.append(self._score_box)
 
         # Tone accuracy - inline
@@ -250,15 +250,29 @@ class ToneResultCard(Gtk.Box):
         # Add syllable result widgets
         for result in syllable_results:
             widget = self._create_syllable_result(result)
-            self._results_flow.append(widget)
+            self._results_box.append(widget)
 
         # Update transcription display (characters + pinyin)
         if transcription:
-            self._transcription_chars.set_text(transcription)
-            if transcription_pinyin:
-                self._transcription_pinyin.set_text(f"({transcription_pinyin})")
-            else:
+            # Detect junk ASR output (repetitive characters or too long)
+            is_junk = self._is_junk_transcription(transcription)
+
+            if is_junk:
+                self._transcription_chars.set_text("[ASR error]")
                 self._transcription_pinyin.set_text("")
+            else:
+                # Truncate if too long
+                max_chars = 20
+                display_text = transcription[:max_chars] + "..." if len(transcription) > max_chars else transcription
+                self._transcription_chars.set_text(display_text)
+
+                if transcription_pinyin:
+                    max_pinyin = 30
+                    display_pinyin = transcription_pinyin[:max_pinyin] + "..." if len(transcription_pinyin) > max_pinyin else transcription_pinyin
+                    self._transcription_pinyin.set_text(f"({display_pinyin})")
+                else:
+                    self._transcription_pinyin.set_text("")
+
             self._transcription_box.set_visible(True)
         else:
             self._transcription_box.set_visible(False)
@@ -289,7 +303,35 @@ class ToneResultCard(Gtk.Box):
             self._apply_score_color(self._combined_score_value, overall_accuracy)
             self._combined_score_box.set_visible(True)
 
+        # Show separators
+        self._sep1.set_visible(True)
+        self._sep2.set_visible(True)
+
         self.set_visible(True)
+
+    def _is_junk_transcription(self, text: str) -> bool:
+        """
+        Detect junk ASR output (repetitive characters, too long, etc.)
+
+        Returns True if the transcription looks like garbage.
+        """
+        if not text:
+            return False
+
+        # Too long for expected input (Chinese phrases are typically short)
+        if len(text) > 30:
+            return True
+
+        # Highly repetitive (same character repeated many times)
+        if len(text) >= 4:
+            # Check if dominated by one character
+            from collections import Counter
+            counts = Counter(text)
+            most_common_char, most_common_count = counts.most_common(1)[0]
+            if most_common_count / len(text) > 0.6:  # >60% same character
+                return True
+
+        return False
 
     def _apply_score_color(self, label: Gtk.Label, score: float):
         """Apply color coding to a score label."""
@@ -395,12 +437,12 @@ class ToneResultCard(Gtk.Box):
 
     def clear(self):
         """Clear all results."""
-        # Remove all children from flow box
+        # Remove all children from results box
         while True:
-            child = self._results_flow.get_first_child()
+            child = self._results_box.get_first_child()
             if child is None:
                 break
-            self._results_flow.remove(child)
+            self._results_box.remove(child)
 
         # Reset all score displays
         self._tone_score_value.set_text("-")
@@ -409,6 +451,8 @@ class ToneResultCard(Gtk.Box):
         self._transcription_chars.set_text("")
         self._transcription_pinyin.set_text("")
         self._transcription_box.set_visible(False)
+        self._sep1.set_visible(False)
+        self._sep2.set_visible(False)
         self.set_visible(False)
 
 

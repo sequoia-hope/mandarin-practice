@@ -65,6 +65,7 @@ class Evaluator:
         device: Optional[str] = None,
         use_f0: bool = True,
         use_asr: bool = True,
+        asr_backend: str = "both",
         lazy_load: bool = True,
     ):
         """
@@ -75,11 +76,13 @@ class Evaluator:
             device: Device to use (auto-detected if None)
             use_f0: Whether to use F0 features
             use_asr: Whether to use ASR for word recognition
+            asr_backend: Which ASR to use: "mms", "whisper", or "both"
             lazy_load: If True, load models only when first needed
         """
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.use_f0 = use_f0
         self.use_asr = use_asr
+        self.asr_backend = asr_backend
 
         # Find checkpoint if not specified
         if checkpoint_path is None:
@@ -91,7 +94,8 @@ class Evaluator:
         self._classifier = None
         self._f0_extractor = None
         self._aligner = None
-        self._asr = None
+        self._asr_mms = None
+        self._asr_whisper = None
 
         self._loaded = False
 
@@ -161,16 +165,29 @@ class Evaluator:
 
         self._aligner = EnergyAligner()
 
-        # Load ASR for word recognition
+        # Load ASR models for word recognition based on backend setting
         if self.use_asr:
-            try:
-                from .mms_asr import MMSASR
+            # Load MMS ASR if requested
+            if self.asr_backend in ("mms", "both"):
+                try:
+                    from .mms_asr import MMSASR
 
-                print("[Evaluator] Loading MMS ASR...")
-                self._asr = MMSASR(device=self.device, lazy_load=True)
-            except Exception as e:
-                print(f"[Evaluator] Warning: ASR not available: {e}")
-                self._asr = None
+                    print("[Evaluator] Loading MMS ASR...")
+                    self._asr_mms = MMSASR(device=self.device, lazy_load=True)
+                except Exception as e:
+                    print(f"[Evaluator] Warning: MMS ASR not available: {e}")
+                    self._asr_mms = None
+
+            # Load Whisper ASR if requested
+            if self.asr_backend in ("whisper", "both"):
+                try:
+                    from .mms_asr import WhisperASR
+
+                    print("[Evaluator] Loading Whisper ASR...")
+                    self._asr_whisper = WhisperASR(device=self.device, lazy_load=True)
+                except Exception as e:
+                    print(f"[Evaluator] Warning: Whisper ASR not available: {e}")
+                    self._asr_whisper = None
 
         self._loaded = True
         print("[Evaluator] Ready!")
@@ -204,11 +221,18 @@ class Evaluator:
         return self._aligner
 
     @property
-    def asr(self):
-        """Get ASR, loading if needed."""
+    def asr_mms(self):
+        """Get MMS ASR, loading if needed."""
         if not self._loaded:
             self._load_components()
-        return self._asr
+        return self._asr_mms
+
+    @property
+    def asr_whisper(self):
+        """Get Whisper ASR, loading if needed."""
+        if not self._loaded:
+            self._load_components()
+        return self._asr_whisper
 
     def evaluate(
         self,
@@ -262,17 +286,36 @@ class Evaluator:
         sandhi_result = apply_sandhi(expected_tones, expected_pinyin, characters)
         spoken_tones = sandhi_result.spoken_tones
 
-        # Run ASR for word recognition (on full audio)
+        # Run dual ASR for word recognition (on full audio)
+        # Use both MMS and Whisper, combine with OR logic
         asr_result = None
         char_matches = []
         asr_tones = []
-        if self.use_asr and self._asr is not None and characters:
-            try:
-                asr_result = self._asr.transcribe(audio, expected_text=characters)
+        if self.use_asr and characters:
+            from .mms_asr import combine_asr_results
+
+            mms_result = None
+            whisper_result = None
+
+            # Run MMS ASR
+            if self._asr_mms is not None:
+                try:
+                    mms_result = self._asr_mms.transcribe(audio, expected_text=characters)
+                except Exception as e:
+                    print(f"[Evaluator] MMS ASR failed: {e}")
+
+            # Run Whisper ASR
+            if self._asr_whisper is not None:
+                try:
+                    whisper_result = self._asr_whisper.transcribe(audio, expected_text=characters)
+                except Exception as e:
+                    print(f"[Evaluator] Whisper ASR failed: {e}")
+
+            # Combine results (OR logic for char recognition)
+            if mms_result is not None or whisper_result is not None:
+                asr_result = combine_asr_results(mms_result, whisper_result, characters)
                 char_matches = asr_result.char_matches
                 asr_tones = asr_result.tones
-            except Exception as e:
-                print(f"[Evaluator] ASR failed: {e}")
 
         # Align audio to syllables
         segments = self.aligner.align(audio, expected_pinyin)
@@ -338,26 +381,34 @@ class Evaluator:
             # Get ASR-derived tone for this syllable
             asr_tone = asr_tones[i] if i < len(asr_tones) else None
 
-            # Tone is correct if:
-            # 1. Tone classifier detected an acceptable tone, OR
-            # 2. ASR recognized the character AND ASR-derived tone matches acceptable
+            # Tone is correct if ANY of these are true:
+            # 1. Tone classifier detected an acceptable tone
+            # 2. ASR-derived tone matches acceptable
+            # 3. ASR recognized the character (implies pronunciation was close enough)
+            # Philosophy: any notion of "correct" makes it correct
             classifier_correct = detected_tone in acceptable
-            asr_correct = (
-                char_recognized is True
-                and asr_tone is not None
+            asr_tone_correct = (
+                asr_tone is not None
                 and asr_tone in acceptable
             )
-            is_correct = classifier_correct or asr_correct
+            asr_char_correct = char_recognized is True
+            is_correct = classifier_correct or asr_tone_correct or asr_char_correct
 
-            # Determine what source confirmed correctness
-            if classifier_correct and asr_correct:
-                correct_source = "both"
-            elif classifier_correct:
-                correct_source = "classifier"
-            elif asr_correct:
-                correct_source = "asr"
-            else:
+            # Determine what source(s) confirmed correctness
+            sources = []
+            if classifier_correct:
+                sources.append("classifier")
+            if asr_tone_correct:
+                sources.append("asr_tone")
+            if asr_char_correct:
+                sources.append("asr_char")
+
+            if len(sources) == 0:
                 correct_source = None
+            elif len(sources) == 1:
+                correct_source = sources[0]
+            else:
+                correct_source = "+".join(sources)
 
             syllable_results.append(
                 SyllableResult(

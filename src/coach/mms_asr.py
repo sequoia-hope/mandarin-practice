@@ -81,12 +81,30 @@ def to_pinyin_with_tones(text: str) -> tuple[str, list[int]]:
 
 def normalize_chinese(text: str) -> str:
     """Normalize Chinese text for comparison."""
-    # Remove spaces, punctuation, convert to simplified
+    # Remove spaces, punctuation, keep only Chinese characters
     import re
-
-    # Keep only Chinese characters
-    text = re.sub(r"[^\u4e00-\u9fff]", "", text)
+    text = re.sub(r"[^\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]", "", text)
     return text
+
+
+def chars_match(char1: str, char2: str) -> bool:
+    """
+    Check if two Chinese characters match, considering traditional/simplified variants.
+
+    Uses pinyin comparison as fallback - if two characters have the same pinyin,
+    they're considered equivalent (e.g., 謝 and 谢 both = xiè).
+    """
+    if char1 == char2:
+        return True
+
+    # Compare by pinyin (handles traditional/simplified variants)
+    try:
+        from pypinyin import pinyin, Style
+        py1 = pinyin(char1, style=Style.TONE)[0][0] if char1 else ""
+        py2 = pinyin(char2, style=Style.TONE)[0][0] if char2 else ""
+        return py1 == py2 and py1 != ""
+    except Exception:
+        return False
 
 
 def compute_char_matches(transcribed: str, expected: str) -> tuple[list[bool], float]:
@@ -94,7 +112,8 @@ def compute_char_matches(transcribed: str, expected: str) -> tuple[list[bool], f
     Compute character-level matches between transcribed and expected text.
 
     Uses a simple alignment: for each expected character, check if it appears
-    in the transcription in roughly the right position.
+    in the transcription in roughly the right position. Handles traditional/simplified
+    variants by comparing pinyin.
 
     Returns:
         (list of bools for each expected char, match score 0-1)
@@ -115,14 +134,18 @@ def compute_char_matches(transcribed: str, expected: str) -> tuple[list[bool], f
 
         for offset in range(search_window + 1):
             if trans_idx + offset < len(trans_normalized):
-                if trans_normalized[trans_idx + offset] == exp_char:
+                trans_char = trans_normalized[trans_idx + offset]
+                if chars_match(trans_char, exp_char):
                     found = True
                     trans_idx = trans_idx + offset + 1
                     break
 
         # Also check if char appears anywhere (for reordering tolerance)
-        if not found and exp_char in trans_normalized:
-            found = True
+        if not found:
+            for trans_char in trans_normalized:
+                if chars_match(trans_char, exp_char):
+                    found = True
+                    break
 
         matches.append(found)
 
@@ -300,10 +323,263 @@ class MMSASR:
         print("[MMS ASR] Model unloaded.")
 
 
-# Convenience function
+class WhisperASR:
+    """
+    Whisper-based ASR for Mandarin Chinese.
+
+    Uses OpenAI's Whisper model via Hugging Face transformers.
+    Complements MMS ASR with a different architecture.
+    """
+
+    _instance = None
+    _lock = threading.Lock()
+
+    def __init__(
+        self,
+        model_name: str = "openai/whisper-base",
+        device: Optional[str] = None,
+        lazy_load: bool = True,
+    ):
+        """
+        Initialize Whisper ASR.
+
+        Args:
+            model_name: Hugging Face model identifier (whisper-tiny, whisper-base, whisper-small)
+            device: Torch device (auto-detected if None)
+            lazy_load: If True, load model on first use
+        """
+        self.model_name = model_name
+        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+
+        self._processor = None
+        self._model = None
+        self._loaded = False
+
+        if not lazy_load:
+            self._load_model()
+
+    @classmethod
+    def get_instance(cls, **kwargs) -> "WhisperASR":
+        """Get singleton instance."""
+        with cls._lock:
+            if cls._instance is None:
+                cls._instance = cls(**kwargs)
+            return cls._instance
+
+    def _load_model(self):
+        """Load the Whisper ASR model."""
+        if self._loaded:
+            return
+
+        from transformers import WhisperProcessor, WhisperForConditionalGeneration
+
+        print(f"[Whisper ASR] Loading model {self.model_name}...")
+
+        self._processor = WhisperProcessor.from_pretrained(self.model_name)
+        self._model = WhisperForConditionalGeneration.from_pretrained(self.model_name)
+        self._model.to(self.device)
+        self._model.eval()
+
+        self._loaded = True
+        print("[Whisper ASR] Model loaded.")
+
+    @property
+    def is_loaded(self) -> bool:
+        """Check if model is loaded."""
+        return self._loaded
+
+    def transcribe(
+        self,
+        audio: np.ndarray,
+        sample_rate: int = 16000,
+        expected_text: Optional[str] = None,
+    ) -> ASRResult:
+        """
+        Transcribe audio to Chinese text.
+
+        Args:
+            audio: Audio samples (numpy array, mono, 16kHz)
+            sample_rate: Sample rate (should be 16000)
+            expected_text: Optional expected text for matching
+
+        Returns:
+            ASRResult with transcription and match info
+        """
+        if not self._loaded:
+            self._load_model()
+
+        start_time = time.perf_counter()
+
+        # Ensure correct format
+        if audio.dtype != np.float32:
+            audio = audio.astype(np.float32)
+
+        # Normalize
+        if np.abs(audio).max() > 0:
+            audio = audio / np.abs(audio).max()
+
+        # Resample if needed
+        if sample_rate != 16000:
+            import librosa
+            audio = librosa.resample(audio, orig_sr=sample_rate, target_sr=16000)
+
+        # Process audio
+        inputs = self._processor(
+            audio,
+            sampling_rate=16000,
+            return_tensors="pt",
+        )
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+
+        # Generate transcription with Chinese language forced
+        with torch.no_grad():
+            generated_ids = self._model.generate(
+                inputs["input_features"],
+                language="chinese",
+                task="transcribe",
+                max_new_tokens=128,
+            )
+
+        # Decode
+        transcription = self._processor.batch_decode(
+            generated_ids, skip_special_tokens=True
+        )[0]
+
+        # Whisper doesn't provide easy confidence scores, estimate from length
+        confidence = min(1.0, len(transcription.strip()) / 10) if transcription else 0.0
+
+        processing_time_ms = (time.perf_counter() - start_time) * 1000
+
+        # Compute character matches if expected text provided
+        char_matches = []
+        match_score = 0.0
+
+        if expected_text:
+            char_matches, match_score = compute_char_matches(transcription, expected_text)
+
+        # Convert transcription to pinyin with tones
+        transcription_pinyin, transcription_tones = to_pinyin_with_tones(transcription.strip())
+
+        return ASRResult(
+            text=transcription.strip(),
+            pinyin=transcription_pinyin,
+            tones=transcription_tones,
+            confidence=confidence,
+            char_matches=char_matches,
+            match_score=match_score,
+            processing_time_ms=processing_time_ms,
+        )
+
+    def unload(self):
+        """Unload model to free memory."""
+        if self._model is not None:
+            del self._model
+            self._model = None
+
+        if self._processor is not None:
+            del self._processor
+            self._processor = None
+
+        self._loaded = False
+
+        import gc
+        gc.collect()
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        print("[Whisper ASR] Model unloaded.")
+
+
+def combine_asr_results(
+    result1: Optional[ASRResult],
+    result2: Optional[ASRResult],
+    expected_text: Optional[str] = None,
+) -> ASRResult:
+    """
+    Combine results from two ASR models using OR logic.
+
+    For each character position, if either model recognized it, mark as recognized.
+    Uses the transcription from the model with higher match score.
+
+    Args:
+        result1: First ASR result (e.g., MMS)
+        result2: Second ASR result (e.g., Whisper)
+        expected_text: Expected text for length reference
+
+    Returns:
+        Combined ASRResult
+    """
+    if result1 is None and result2 is None:
+        return ASRResult(
+            text="",
+            pinyin="",
+            tones=[],
+            confidence=0.0,
+            char_matches=[],
+            match_score=0.0,
+        )
+
+    if result1 is None:
+        return result2
+    if result2 is None:
+        return result1
+
+    # Combine char_matches with OR logic
+    n_chars = max(len(result1.char_matches), len(result2.char_matches))
+    combined_matches = []
+    for i in range(n_chars):
+        match1 = result1.char_matches[i] if i < len(result1.char_matches) else False
+        match2 = result2.char_matches[i] if i < len(result2.char_matches) else False
+        combined_matches.append(match1 or match2)
+
+    combined_score = sum(combined_matches) / len(combined_matches) if combined_matches else 0.0
+
+    # Combine tones with OR logic - prefer non-zero tone
+    combined_tones = []
+    n_tones = max(len(result1.tones), len(result2.tones))
+    for i in range(n_tones):
+        tone1 = result1.tones[i] if i < len(result1.tones) else 0
+        tone2 = result2.tones[i] if i < len(result2.tones) else 0
+        # Prefer the tone from the model that recognized the character
+        match1 = result1.char_matches[i] if i < len(result1.char_matches) else False
+        match2 = result2.char_matches[i] if i < len(result2.char_matches) else False
+        if match1 and not match2:
+            combined_tones.append(tone1)
+        elif match2 and not match1:
+            combined_tones.append(tone2)
+        else:
+            # Both or neither matched, use first non-zero
+            combined_tones.append(tone1 if tone1 else tone2)
+
+    # Use transcription from model with higher match score
+    if result1.match_score >= result2.match_score:
+        primary = result1
+        secondary = result2
+    else:
+        primary = result2
+        secondary = result1
+
+    return ASRResult(
+        text=primary.text,
+        pinyin=primary.pinyin,
+        tones=combined_tones,
+        confidence=max(result1.confidence, result2.confidence),
+        char_matches=combined_matches,
+        match_score=combined_score,
+        processing_time_ms=result1.processing_time_ms + result2.processing_time_ms,
+    )
+
+
+# Convenience functions
 def get_mms_asr(**kwargs) -> MMSASR:
     """Get singleton MMS ASR instance."""
     return MMSASR.get_instance(**kwargs)
+
+
+def get_whisper_asr(**kwargs) -> WhisperASR:
+    """Get singleton Whisper ASR instance."""
+    return WhisperASR.get_instance(**kwargs)
 
 
 if __name__ == "__main__":
