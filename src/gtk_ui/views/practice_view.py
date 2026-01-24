@@ -218,11 +218,11 @@ class PracticeView(Gtk.Box):
             spoken_tones=sandhi_result.spoken_tones,
         )
 
-        # Update pitch visualizer expected tone
-        if phrase["tones"]:
-            self._pitch_viz.set_expected_tone(phrase["tones"][0])
+        # Update pitch visualizer with all expected tones (use spoken tones after sandhi)
+        if sandhi_result.spoken_tones:
+            self._pitch_viz.set_expected_tones(sandhi_result.spoken_tones)
         else:
-            self._pitch_viz.set_expected_tone(None)
+            self._pitch_viz.set_expected_tones(None)
 
         # Clear previous results
         self._results_card.clear()
@@ -252,7 +252,27 @@ class PracticeView(Gtk.Box):
             tts = self._get_tts()
             if tts:
                 try:
-                    tts.speak(phrase["characters"], language="zh", play=True)
+                    # Generate audio without playing first
+                    audio = tts.speak(phrase["characters"], language="zh", play=False)
+
+                    if audio is not None and len(audio) > 0:
+                        # Extract F0 from reference audio
+                        try:
+                            from ...features.f0_extract import F0Extractor
+                            f0_extractor = F0Extractor(method="pyin")
+                            f0_result = f0_extractor.extract(audio)
+                            reference_f0 = f0_result.get("f0", np.array([]))
+
+                            # Update visualizer on main thread
+                            GLib.idle_add(
+                                lambda f0=reference_f0: self._pitch_viz.set_reference_f0(f0)
+                            )
+                        except Exception as e:
+                            print(f"[PracticeView] F0 extraction error: {e}")
+
+                        # Now play the audio
+                        tts.speak(phrase["characters"], language="zh", play=True)
+
                 except Exception as e:
                     print(f"[PracticeView] TTS error: {e}")
 
