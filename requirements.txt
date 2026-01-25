@@ -21,6 +21,11 @@ tgt>=1.4.4
 silero-vad>=4.0.0
 onnxruntime>=1.16.0
 
+# ASR (optional)
+omnilingual-asr>=1.0.0
+pypinyin>=0.50.0
+pyctcdecode>=0.4.0  # For hotword-boosted CTC decoding
+
 # Visualization
 matplotlib>=3.7.0
 rich>=13.0.0
@@ -30,5 +35,10 @@ pyyaml>=6.0.0
 tqdm>=4.65.0
 pandas>=2.0.0
 
+# LLM backends (optional - install as needed)
+# anthropic>=0.18.0  # For Claude backend
+# ollama>=0.1.0      # For Ollama backend
+
 # Development
 pytest>=7.0.0
+scikit-learn>=1.3.0  # For layer analysis

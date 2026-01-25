@@ -214,6 +214,28 @@ class MMSASR:
         self._processor.tokenizer.set_target_lang("cmn-script_simplified")
         self._model.load_adapter("cmn-script_simplified")
 
+        # Try to set up pyctcdecode for better decoding with hotwords
+        self._decoder = None
+        try:
+            from pyctcdecode import build_ctcdecoder
+
+            # Get vocabulary from processor
+            vocab = self._processor.tokenizer.get_vocab()
+            # Sort by index to get labels in correct order
+            sorted_vocab = sorted(vocab.items(), key=lambda x: x[1])
+            labels = [item[0] for item in sorted_vocab]
+
+            # Build decoder without LM (we'll use hotwords instead)
+            self._decoder = build_ctcdecoder(
+                labels=labels,
+                kenlm_model_path=None,  # No LM, just hotwords
+            )
+            print("[MMS ASR] pyctcdecode decoder initialized for hotword support.")
+        except ImportError:
+            print("[MMS ASR] pyctcdecode not available, using greedy decoding.")
+        except Exception as e:
+            print(f"[MMS ASR] Could not initialize pyctcdecode: {e}")
+
         self._loaded = True
         print("[MMS ASR] Model loaded.")
 
@@ -271,9 +293,34 @@ class MMSASR:
             outputs = self._model(**inputs)
             logits = outputs.logits
 
-        # Decode
-        predicted_ids = torch.argmax(logits, dim=-1)
-        transcription = self._processor.batch_decode(predicted_ids)[0]
+        # Decode - use pyctcdecode with hotwords if available and expected text provided
+        if self._decoder is not None and expected_text:
+            # Use beam search with hotwords to bias toward expected characters
+            # Extract individual characters as hotwords
+            hotwords = list(normalize_chinese(expected_text))
+            # Also add the full phrase
+            if len(expected_text) > 1:
+                hotwords.append(expected_text)
+
+            try:
+                # Convert logits to numpy for pyctcdecode
+                logits_np = logits[0].cpu().numpy()
+
+                # Decode with hotwords
+                transcription = self._decoder.decode(
+                    logits_np,
+                    hotwords=hotwords,
+                    hotword_weight=10.0,  # Strong bias toward expected words
+                )
+            except Exception as e:
+                # Fall back to greedy decoding
+                print(f"[MMS ASR] Hotword decoding failed: {e}")
+                predicted_ids = torch.argmax(logits, dim=-1)
+                transcription = self._processor.batch_decode(predicted_ids)[0]
+        else:
+            # Standard greedy decoding
+            predicted_ids = torch.argmax(logits, dim=-1)
+            transcription = self._processor.batch_decode(predicted_ids)[0]
 
         # Compute confidence from logits
         probs = torch.softmax(logits, dim=-1)
@@ -400,7 +447,7 @@ class WhisperASR:
         Args:
             audio: Audio samples (numpy array, mono, 16kHz)
             sample_rate: Sample rate (should be 16000)
-            expected_text: Optional expected text for matching
+            expected_text: Optional expected text for matching (also used as prompt hint)
 
         Returns:
             ASRResult with transcription and match info
@@ -431,19 +478,46 @@ class WhisperASR:
         )
         inputs = {k: v.to(self.device) for k, v in inputs.items()}
 
+        # Build generation kwargs
+        gen_kwargs = {
+            "language": "chinese",
+            "task": "transcribe",
+            "max_new_tokens": 128,
+        }
+
+        # Use expected text as prompt to bias recognition
+        # This helps Whisper anticipate the vocabulary we expect
+        prompt_ids = None
+        if expected_text:
+            try:
+                # Create a prompt that hints at the expected content
+                # Format: "The speaker will say: [expected]"
+                # This biases the model toward the expected vocabulary
+                prompt = f"Chinese phrase: {expected_text}"
+                prompt_ids = self._processor.get_prompt_ids(prompt, return_tensors="pt")
+                prompt_ids = prompt_ids.to(self.device)
+                gen_kwargs["prompt_ids"] = prompt_ids
+            except Exception as e:
+                # Fall back to no prompting if it fails
+                print(f"[Whisper ASR] Prompt creation failed: {e}")
+
         # Generate transcription with Chinese language forced
         with torch.no_grad():
             generated_ids = self._model.generate(
                 inputs["input_features"],
-                language="chinese",
-                task="transcribe",
-                max_new_tokens=128,
+                **gen_kwargs,
             )
 
-        # Decode
-        transcription = self._processor.batch_decode(
-            generated_ids, skip_special_tokens=True
-        )[0]
+        # Decode - if we used prompt_ids, slice them off
+        if prompt_ids is not None:
+            # Use the processor's handling of prompt_ids for proper decoding
+            transcription = self._processor.batch_decode(
+                generated_ids, skip_special_tokens=True, prompt_ids=prompt_ids
+            )[0]
+        else:
+            transcription = self._processor.batch_decode(
+                generated_ids, skip_special_tokens=True
+            )[0]
 
         # Whisper doesn't provide easy confidence scores, estimate from length
         confidence = min(1.0, len(transcription.strip()) / 10) if transcription else 0.0
