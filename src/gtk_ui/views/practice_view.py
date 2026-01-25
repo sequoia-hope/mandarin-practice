@@ -57,10 +57,14 @@ class PracticeView(Gtk.Box):
         # Lazy-loaded components
         self._tts = None
         self._evaluator = None
+        self._progress_tracker = None
         self._tts_backend = "light"
 
         # Build UI
         self._build_ui()
+
+        # Connect to unrealize to save progress on close
+        self.connect("unrealize", self._on_unrealize)
 
     def _build_ui(self):
         """Build the practice view UI."""
@@ -206,6 +210,18 @@ class PracticeView(Gtk.Box):
             except Exception as e:
                 print(f"[PracticeView] Failed to load Evaluator: {e}")
         return self._evaluator
+
+    def _get_progress_tracker(self):
+        """Get progress tracker instance, creating if needed."""
+        if self._progress_tracker is None:
+            try:
+                from ...coach.progress import ProgressTracker
+                self._progress_tracker = ProgressTracker()
+                # Start a session when first used
+                self._progress_tracker.start_session()
+            except Exception as e:
+                print(f"[PracticeView] Failed to load ProgressTracker: {e}")
+        return self._progress_tracker
 
     def _update_phrase(self):
         """Update the display for the current phrase."""
@@ -451,6 +467,9 @@ class PracticeView(Gtk.Box):
             if all_f0:
                 self._pitch_viz.set_user_f0(np.array(all_f0))
 
+        # Record progress
+        self._record_progress(result)
+
         self.emit("evaluation-complete", result)
 
         # Handle auto mode progression
@@ -465,6 +484,36 @@ class PracticeView(Gtk.Box):
             else:
                 # Incorrect - replay reference and try again after showing results
                 GLib.timeout_add(2000, self._auto_retry_phrase)
+
+    def _record_progress(self, result):
+        """Record evaluation result in progress tracker."""
+        tracker = self._get_progress_tracker()
+        if tracker is None:
+            return
+
+        if not self._lesson:
+            return
+
+        phrase = self._lesson.phrases[self._current_phrase_idx]
+
+        # Convert to dict format for progress tracker
+        syllable_dicts = [
+            {
+                "expected_tone": r.expected_tone,
+                "detected_tone": r.detected_tone,
+                "correct": r.correct,
+            }
+            for r in result.syllable_results
+        ]
+
+        tracker.record_evaluation(syllable_dicts, phrase=phrase["characters"])
+
+        # Check if phrase is mastered (high combined score)
+        if result.combined_score >= 0.9:
+            tracker.mark_phrase_mastered(phrase["characters"])
+
+        # Save immediately so ProgressView can see updates
+        tracker.save()
 
     def _on_evaluation_error(self, error_message: str):
         """Handle evaluation error on main thread."""
@@ -531,3 +580,8 @@ class PracticeView(Gtk.Box):
         if self._lesson and self._current_phrase_idx < len(self._lesson.phrases) - 1:
             self._current_phrase_idx += 1
             self._update_phrase()
+
+    def _on_unrealize(self, widget):
+        """Handle widget destruction - save progress."""
+        if self._progress_tracker is not None:
+            self._progress_tracker.end_session()
