@@ -315,7 +315,8 @@ class PracticeView(Gtk.Box):
             if tts:
                 try:
                     # Generate audio without playing first
-                    audio = tts.speak(phrase["characters"], language="zh", play=False)
+                    # Use "teacher" speed: slow and deliberate, like teaching adults
+                    audio = tts.speak(phrase["characters"], language="zh", speed="teacher", play=False)
 
                     if audio is not None and len(audio) > 0:
                         # Extract F0 from reference audio
@@ -332,8 +333,8 @@ class PracticeView(Gtk.Box):
                         except Exception as e:
                             print(f"[PracticeView] F0 extraction error: {e}")
 
-                        # Now play the audio
-                        tts.speak(phrase["characters"], language="zh", play=True)
+                        # Now play the audio (teacher speed for clear pronunciation)
+                        tts.speak(phrase["characters"], language="zh", speed="teacher", play=True)
 
                 except Exception as e:
                     print(f"[PracticeView] TTS error: {e}")

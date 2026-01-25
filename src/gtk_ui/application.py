@@ -77,10 +77,10 @@ class ToneCoachApp(Adw.Application):
                 pinyin = phrase["pinyin"]
                 tones = phrase["tones"]
 
-                # Generate TTS audio
+                # Generate TTS audio (teacher speed for learning)
                 from src.coach.tts import LightTTS
                 tts = LightTTS()
-                audio = tts.speak(chars, language="zh", play=False)
+                audio = tts.speak(chars, language="zh", speed="teacher", play=False)
 
                 if audio is None or len(audio) == 0:
                     print("[Preload] TTS returned no audio")

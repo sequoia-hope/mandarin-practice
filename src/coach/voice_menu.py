@@ -299,12 +299,12 @@ class VoiceMenu:
                     return self.lesson_audio_dir / entry["audio_path"]
         return None
 
-    def speak(self, text: str, language: str = "en", wait: bool = True):
+    def speak(self, text: str, language: str = "en", wait: bool = True, speed: str = "normal"):
         """Speak text using TTS."""
         print(f"  {text}")
         if self.tts:
             try:
-                audio = self.tts.speak(text, language=language, play=True)
+                audio = self.tts.speak(text, language=language, speed=speed, play=True)
                 if wait:
                     time.sleep(0.1)  # Small pause after speaking
             except Exception as e:
@@ -486,7 +486,8 @@ class VoiceMenu:
             print("  [Playing reference audio...]")
             self.play_audio_file(audio_path)
         elif self.tts:
-            self.speak(phrase['characters'], language="zh", wait=True)
+            # Use teacher speed: slow and deliberate for language learning
+            self.speak(phrase['characters'], language="zh", wait=True, speed="teacher")
         else:
             print(f"  [Reference: {phrase['characters']}]")
 
