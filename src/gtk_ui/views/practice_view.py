@@ -47,6 +47,10 @@ class PracticeView(Gtk.Box):
         self._lesson = None
         self._current_phrase_idx = 0
 
+        # Automatic mode state
+        self._auto_mode = False
+        self._auto_mode_active = False  # Whether we're in an auto-play/record cycle
+
         # Thread pool for background operations
         self._executor = ThreadPoolExecutor(max_workers=2)
 
@@ -117,6 +121,24 @@ class PracticeView(Gtk.Box):
         # Results card
         self._results_card = ToneResultCard()
         content.append(self._results_card)
+
+        # Auto mode toggle
+        auto_box = Gtk.Box(
+            orientation=Gtk.Orientation.HORIZONTAL,
+            spacing=12,
+            halign=Gtk.Align.CENTER,
+        )
+        auto_box.set_margin_top(16)
+
+        auto_label = Gtk.Label(label="Automatic Mode")
+        auto_box.append(auto_label)
+
+        self._auto_switch = Gtk.Switch()
+        self._auto_switch.set_valign(Gtk.Align.CENTER)
+        self._auto_switch.connect("notify::active", self._on_auto_mode_toggled)
+        auto_box.append(self._auto_switch)
+
+        content.append(auto_box)
 
         # Navigation buttons
         nav_box = Gtk.Box(
@@ -240,6 +262,26 @@ class PracticeView(Gtk.Box):
             f"{self._current_phrase_idx + 1} / {len(self._lesson.phrases)}"
         )
 
+    def _on_auto_mode_toggled(self, switch, pspec):
+        """Handle auto mode toggle."""
+        self._auto_mode = switch.get_active()
+
+        if self._auto_mode:
+            # Start auto mode: play current phrase
+            self._auto_mode_active = True
+            self._start_auto_play()
+        else:
+            # Stop auto mode
+            self._auto_mode_active = False
+
+    def _start_auto_play(self):
+        """Start automatic playback (used in auto mode)."""
+        if not self._lesson or not self._auto_mode_active:
+            return
+
+        # Trigger play which will chain into recording
+        self._on_play_clicked(self._play_button)
+
     def _on_play_clicked(self, button):
         """Handle play reference button click."""
         if not self._lesson:
@@ -247,6 +289,10 @@ class PracticeView(Gtk.Box):
 
         phrase = self._lesson.phrases[self._current_phrase_idx]
         button.set_sensitive(False)
+
+        # In auto mode, also disable record button during playback
+        if self._auto_mode:
+            self._record_button.set_sensitive(False)
 
         def play_audio():
             tts = self._get_tts()
@@ -276,9 +322,25 @@ class PracticeView(Gtk.Box):
                 except Exception as e:
                     print(f"[PracticeView] TTS error: {e}")
 
-            GLib.idle_add(lambda: button.set_sensitive(True))
+            GLib.idle_add(self._on_play_complete)
 
         self._executor.submit(play_audio)
+
+    def _on_play_complete(self):
+        """Called when reference audio playback completes."""
+        self._play_button.set_sensitive(True)
+        self._record_button.set_sensitive(True)
+
+        # In auto mode, automatically start recording after playback
+        if self._auto_mode and self._auto_mode_active:
+            # Small delay before recording to give user time to prepare
+            GLib.timeout_add(500, self._auto_start_recording)
+
+    def _auto_start_recording(self):
+        """Start recording in auto mode (called after delay)."""
+        if self._auto_mode and self._auto_mode_active:
+            self._on_record_start(self._record_button)
+        return False  # Don't repeat the timeout
 
     def _on_record_start(self, button):
         """Handle record start."""
@@ -344,6 +406,10 @@ class PracticeView(Gtk.Box):
 
         if result.status == "error" or result.status == "timeout":
             self._show_error(result.error or "Recording failed")
+            # Stop auto mode on error/timeout
+            if self._auto_mode:
+                self._auto_mode_active = False
+                self._auto_switch.set_active(False)
             return
 
         # Convert to dict format for results card
@@ -387,10 +453,28 @@ class PracticeView(Gtk.Box):
 
         self.emit("evaluation-complete", result)
 
+        # Handle auto mode progression
+        if self._auto_mode and self._auto_mode_active:
+            # Determine if attempt was successful (use combined_score or overall_accuracy)
+            # Consider it correct if combined score >= 80% or all tones correct
+            is_correct = result.combined_score >= 0.8 or result.overall_accuracy >= 1.0
+
+            if is_correct:
+                # Success! Advance to next phrase after a brief pause
+                GLib.timeout_add(1500, self._auto_advance_to_next)
+            else:
+                # Incorrect - replay reference and try again after showing results
+                GLib.timeout_add(2000, self._auto_retry_phrase)
+
     def _on_evaluation_error(self, error_message: str):
         """Handle evaluation error on main thread."""
         self._record_button.set_state(RecordState.IDLE)
         self._show_error(error_message)
+
+        # Stop auto mode on error
+        if self._auto_mode:
+            self._auto_mode_active = False
+            self._auto_switch.set_active(False)
 
     def _show_error(self, message: str):
         """Show an error toast."""
@@ -401,6 +485,40 @@ class PracticeView(Gtk.Box):
             window.add_toast(toast)
         else:
             print(f"[PracticeView] Error: {message}")
+
+    def _auto_advance_to_next(self):
+        """Advance to next phrase in auto mode."""
+        if not self._auto_mode or not self._auto_mode_active:
+            return False
+
+        if self._lesson and self._current_phrase_idx < len(self._lesson.phrases) - 1:
+            self._current_phrase_idx += 1
+            self._update_phrase()
+            # Auto-play the new phrase after a brief delay
+            GLib.timeout_add(500, self._start_auto_play)
+        else:
+            # End of lesson - stop auto mode
+            self._auto_mode_active = False
+            self._auto_switch.set_active(False)
+            self._show_toast("Lesson complete!")
+
+        return False  # Don't repeat the timeout
+
+    def _auto_retry_phrase(self):
+        """Replay reference and retry in auto mode."""
+        if not self._auto_mode or not self._auto_mode_active:
+            return False
+
+        # Replay the reference audio, which will chain into recording
+        self._start_auto_play()
+        return False  # Don't repeat the timeout
+
+    def _show_toast(self, message: str):
+        """Show an informational toast."""
+        window = self.get_root()
+        if window and hasattr(window, "add_toast"):
+            toast = Adw.Toast(title=message, timeout=3)
+            window.add_toast(toast)
 
     def _on_prev_clicked(self, button):
         """Go to previous phrase."""

@@ -8,6 +8,7 @@ An interactive application for learning Mandarin Chinese tone pronunciation with
 - **Dual ASR system** - MMS + Whisper with contextual biasing for accurate recognition
 - **Sandhi-aware validation** - Automatically handles tone sandhi rules (T3+T3, 不, 一)
 - **Pitch visualization** - See your F0 contour compared to reference audio
+- **Automatic practice mode** - Hands-free drilling with auto-play, auto-listen, and auto-advance
 - **Multiple interfaces** - GTK4 GUI, voice-controlled menu, or conversational mode
 - **Offline capable** - Core evaluation runs entirely locally
 - **Progress tracking** - Track your accuracy over time with per-tone statistics
@@ -31,6 +32,8 @@ An interactive application for learning Mandarin Chinese tone pronunciation with
 │             │   [Record]  [Play Reference]                  │
 │             │                                               │
 │             │   Results: [你 T3 ✓] [好 T3 ✓]  Score: 100%  │
+│             │                                               │
+│             │   Automatic Mode [==○]                        │
 └─────────────┴───────────────────────────────────────────────┘
 ```
 
@@ -80,6 +83,16 @@ Options:
 - `--asr whisper` - Use only Whisper ASR
 - `--asr both` - Use dual ASR (default, best accuracy)
 - `--asr none` - Disable ASR (tone classifier only)
+
+#### Automatic Mode
+
+Toggle "Automatic Mode" in the GUI for hands-free practice:
+1. Reference audio plays automatically
+2. System listens for your response
+3. **Correct** (≥80% score): Advances to next phrase
+4. **Incorrect**: Replays reference and listens again
+
+This allows continuous drilling without touching the keyboard.
 
 ### Voice-Controlled Menu
 
