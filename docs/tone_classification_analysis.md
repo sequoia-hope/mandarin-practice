@@ -1,10 +1,23 @@
 # Tone Classification Accuracy Analysis
 
 Analysis performed: 2026-01-26
+Updated: 2026-01-26 (Root cause identified)
 
 ## Overview
 
 This document summarizes the accuracy of the tone classifier when evaluated against TTS-generated minimal pairs (words that differ only in tone).
+
+## Executive Summary
+
+**Root cause identified: F0 features are hurting T3 classification.**
+
+| Configuration | T3 Accuracy | Overall |
+|--------------|-------------|---------|
+| MMS features only | **100%** | 100% |
+| MMS + F0 features | **66.7%** | 91.7% |
+| Current production model | **0%** | 73.3% |
+
+The MMS encoder alone can perfectly classify all tones. F0 fusion introduces confusion for Tone 3.
 
 ## Test Methodology
 
@@ -93,25 +106,69 @@ All pinyin bases show identical 75% accuracy (3/4 correct), with the single fail
 | yi | 75% | 椅 (T3) |
 | du | 75% | 堵 (T3) |
 
+## Root Cause Analysis
+
+### Layer Analysis
+
+We performed a systematic analysis of all 25 MMS layers (including embeddings) to determine if our layer selection was suboptimal.
+
+**Finding: Layer selection is NOT the problem.**
+
+| Layer | Accuracy | Notes |
+|-------|----------|-------|
+| Layer 17 | 98.3% | Best single layer |
+| Layer 3 | 96.7% | Strong early layer |
+| Layers 16-22 | 95-97% | All high accuracy |
+| Current config (8-12, 15-17) | 96.7% | Competitive |
+
+All layers from 0-23 achieve 90%+ accuracy with simple linear probes, with **100% T3 accuracy**.
+
+### F0 Feature Analysis
+
+We then tested whether F0 features were the problem by retraining with clean TTS data:
+
+| Configuration | T1 | T2 | T3 | T4 | Overall |
+|--------------|----|----|----|----|---------|
+| MMS only | 100% | 100% | **100%** | 100% | 100% |
+| MMS + F0 | 100% | 100% | **66.7%** | 100% | 91.7% |
+
+**Conclusion: F0 features are causing T3 misclassification as T2.**
+
+### Why F0 Hurts T3
+
+Tone 3 has a distinctive "dipping" F0 contour (high → low → rise). However:
+
+1. **Short audio clips** may not capture the full T3 contour
+2. **The final rise** of T3 can resemble T2 (rising tone)
+3. **F0 summary statistics** (mean, range, slope) lose the temporal shape
+4. The model learns to rely on F0 signals that are **misleading for T3**
+
 ## Recommendations
 
-### Short-term Mitigations
+### Immediate Fix (Recommended)
 
-1. **Increase ASR weight for T3**: When classifier predicts T1/T2 with moderate confidence, give more weight to ASR tone detection
+**Disable F0 features for the tone classifier.**
 
-2. **Add T3-specific heuristics**: Use F0 contour analysis to detect the characteristic dip pattern
+The MMS encoder already captures prosodic information in layers 8-12. The F0 fusion adds complexity without benefit and actively harms T3 detection.
 
-3. **Lower threshold for T3 sandhi**: Accept T2 pronunciations when T3 is expected (natural sandhi behavior)
+```python
+# In evaluator.py or during model loading
+evaluator = Evaluator(use_f0=False)
+```
 
-### Long-term Improvements
+Or retrain the model with `use_f0=False`:
 
-1. **Retrain classifier with balanced T3 data**: Ensure training set has sufficient, correctly-labeled T3 samples
+```bash
+python -m src.model.train --use-f0 false ...
+```
 
-2. **Use T3-aware augmentation**: Apply pitch transformations that preserve T3 characteristics
+### Alternative Improvements
 
-3. **Multi-TTS training**: Train on audio from multiple TTS engines to improve generalization
+1. **Improve F0 feature representation**: Instead of summary statistics, use the actual F0 contour shape (e.g., via learned embeddings or contour templates)
 
-4. **Real speech validation**: Test against human recordings to verify this isn't a TTS artifact
+2. **T3-specific F0 handling**: Only use F0 for T1/T2/T4 discrimination, disable for T3
+
+3. **Contour-based classification**: Match F0 contours against tone templates using DTW or learned similarity
 
 ## Test Reproduction
 
