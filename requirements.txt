@@ -21,10 +21,12 @@ tgt>=1.4.4
 silero-vad>=4.0.0
 onnxruntime>=1.16.0
 
-# ASR (optional)
-omnilingual-asr>=1.0.0
+# ASR
 pypinyin>=0.50.0
 pyctcdecode>=0.4.0  # For hotword-boosted CTC decoding
+
+# Optional: omnilingual-asr (only needed for legacy realtime pipeline, requires Python 3.10-3.12)
+# pip install omnilingual-asr>=1.0.0
 
 # Visualization
 matplotlib>=3.7.0
