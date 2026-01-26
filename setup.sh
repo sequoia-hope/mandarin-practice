@@ -25,11 +25,38 @@ echo "Checking GTK4 dependencies..."
 if $PYTHON -c "import gi; gi.require_version('Gtk', '4.0')" 2>/dev/null; then
     echo "  GTK4 bindings: OK"
 else
-    echo "  GTK4 bindings: NOT FOUND"
+    echo "  GTK4 bindings: NOT FOUND for $PYTHON"
     echo
-    echo "Please install GTK4 system packages first:"
+
+    # Try to find which Python has gi installed
+    echo "Searching for Python with GTK bindings..."
+    FOUND_PYTHON=""
+    for py in python3.12 python3.11 python3.10 python3; do
+        if command -v $py &> /dev/null; then
+            if $py -c "import gi; gi.require_version('Gtk', '4.0')" 2>/dev/null; then
+                FOUND_PYTHON=$py
+                echo "  Found: $py has GTK4 bindings"
+                break
+            fi
+        fi
+    done
+
+    if [ -n "$FOUND_PYTHON" ]; then
+        echo
+        echo "Run setup with the correct Python:"
+        echo "  PYTHON=$FOUND_PYTHON ./setup.sh"
+        exit 1
+    fi
+
     echo
-    echo "  Ubuntu/Debian:"
+    echo "GTK4 Python bindings not found on any Python version."
+    echo
+    echo "Please install GTK4 system packages:"
+    echo
+    echo "  Ubuntu 24.04:"
+    echo "    sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-4.0 gir1.2-adw-1"
+    echo
+    echo "  Ubuntu/Debian (older):"
     echo "    sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1"
     echo
     echo "  Fedora:"
@@ -37,6 +64,10 @@ else
     echo
     echo "  Arch Linux:"
     echo "    sudo pacman -S python-gobject gtk4 libadwaita"
+    echo
+    echo "If already installed, check your Python version:"
+    echo "  $PYTHON --version"
+    echo "  dpkg -l | grep python3-gi"
     echo
     echo "Then run this script again."
     exit 1
