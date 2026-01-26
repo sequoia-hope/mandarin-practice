@@ -19,6 +19,29 @@ fi
 PY_VERSION=$($PYTHON -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
 echo "Using Python $PY_VERSION ($PYTHON)"
 
+# Check for NVIDIA GPU
+echo
+echo "Checking for NVIDIA GPU..."
+CPU_ONLY=false
+
+if command -v nvidia-smi &> /dev/null && nvidia-smi &> /dev/null; then
+    GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)
+    echo "  Found: $GPU_NAME"
+    echo
+    read -p "Use GPU for acceleration? [Y/n] " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Nn]$ ]]; then
+        CPU_ONLY=true
+        echo "  Will install CPU-only packages (smaller download)."
+    else
+        echo "  Will install GPU-accelerated packages."
+    fi
+else
+    echo "  No NVIDIA GPU detected."
+    CPU_ONLY=true
+    echo "  Will install CPU-only packages (smaller download)."
+fi
+
 # Check for required system packages (GTK4)
 echo
 echo "Checking GTK4 dependencies..."
@@ -73,8 +96,19 @@ source "$VENV_DIR/bin/activate"
 # Upgrade pip
 pip install --upgrade pip -q
 
-# Install requirements
-pip install -r requirements.txt
+if [ "$CPU_ONLY" = true ]; then
+    echo
+    echo "Installing PyTorch (CPU-only, ~200MB)..."
+    pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+
+    echo
+    echo "Installing remaining dependencies..."
+    pip install -r requirements.txt
+else
+    echo
+    echo "Installing dependencies with CUDA support (~2GB)..."
+    pip install -r requirements.txt
+fi
 
 echo
 echo "=========================================="
@@ -85,8 +119,16 @@ echo "To activate the environment:"
 echo "  source $VENV_DIR/bin/activate"
 echo
 echo "To run the application:"
+if [ "$CPU_ONLY" = true ]; then
+echo "  python run_gtk.py --cpu     # GTK GUI (CPU mode)"
+echo "  python run_voice.py --cpu   # Voice menu"
+echo "  python run_coach.py --cpu   # Conversational mode"
+echo
+echo "Note: Using --cpu flag since GPU packages not installed."
+else
 echo "  python run_gtk.py           # GTK GUI"
-echo "  python run_gtk.py --cpu     # CPU-only mode"
+echo "  python run_gtk.py --cpu     # Force CPU mode"
 echo "  python run_voice.py         # Voice menu"
 echo "  python run_coach.py         # Conversational mode"
+fi
 echo
