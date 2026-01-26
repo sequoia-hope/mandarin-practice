@@ -83,6 +83,7 @@ Options:
 - `--asr whisper` - Use only Whisper ASR
 - `--asr both` - Use dual ASR (default, best accuracy)
 - `--asr none` - Disable ASR (tone classifier only)
+- `--cpu` - Force CPU-only mode (no CUDA/GPU required)
 
 #### Automatic Mode
 

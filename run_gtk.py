@@ -69,6 +69,11 @@ def main():
         default="both",
         help="ASR backend for word recognition: mms, whisper, both, or none (default: both)"
     )
+    parser.add_argument(
+        "--cpu",
+        action="store_true",
+        help="Force CPU-only mode (no CUDA/GPU)"
+    )
     args = parser.parse_args()
 
     if not check_dependencies():
@@ -76,6 +81,8 @@ def main():
 
     # Store settings in environment for app to read
     os.environ["TONE_COACH_ASR_BACKEND"] = args.asr
+    if args.cpu:
+        os.environ["TONE_COACH_DEVICE"] = "cpu"
 
     # Import and run application
     from src.gtk_ui import ToneCoachApp

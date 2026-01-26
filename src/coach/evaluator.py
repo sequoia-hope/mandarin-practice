@@ -1,5 +1,6 @@
 """Unified tone evaluation service combining encoder, classifier, and aligner."""
 
+import os
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -79,7 +80,14 @@ class Evaluator:
             asr_backend: Which ASR to use: "mms", "whisper", or "both"
             lazy_load: If True, load models only when first needed
         """
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        # Check for forced CPU mode via environment variable
+        env_device = os.environ.get("TONE_COACH_DEVICE")
+        if env_device:
+            self.device = env_device
+        elif device:
+            self.device = device
+        else:
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.use_f0 = use_f0
         self.use_asr = use_asr
         self.asr_backend = asr_backend

@@ -1,5 +1,6 @@
 """Simple MMS-based ASR for Mandarin Chinese using Hugging Face transformers."""
 
+import os
 import time
 from dataclasses import dataclass
 from typing import Optional
@@ -179,7 +180,7 @@ class MMSASR:
             lazy_load: If True, load model on first use
         """
         self.model_name = model_name
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = os.environ.get("TONE_COACH_DEVICE") or device or ("cuda" if torch.cuda.is_available() else "cpu")
 
         self._processor = None
         self._model = None
@@ -396,7 +397,7 @@ class WhisperASR:
             lazy_load: If True, load model on first use
         """
         self.model_name = model_name
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = os.environ.get("TONE_COACH_DEVICE") or device or ("cuda" if torch.cuda.is_available() else "cpu")
 
         self._processor = None
         self._model = None
