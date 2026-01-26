@@ -9,9 +9,10 @@ env/
 .env
 
 # Data and models (large files)
-data/
-checkpoints/
-results/
+/data/
+/checkpoints/
+!/checkpoints/best_model.pt
+/results/
 *.pt
 *.pth
 *.wav

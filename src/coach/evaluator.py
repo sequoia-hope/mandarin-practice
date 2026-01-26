@@ -119,12 +119,18 @@ class Evaluator:
             return cls._instance
 
     def _find_best_checkpoint(self) -> Optional[Path]:
-        """Find the best checkpoint file based on accuracy in filename."""
+        """Find the best checkpoint file."""
         checkpoint_dir = Path(__file__).parent.parent.parent / "checkpoints"
 
         if not checkpoint_dir.exists():
             return None
 
+        # First, look for canonical best_model.pt (included in repo)
+        canonical = checkpoint_dir / "best_model.pt"
+        if canonical.exists():
+            return canonical
+
+        # Fall back to accuracy-based search (for local training)
         checkpoints = list(checkpoint_dir.glob("best_model_acc*.pt"))
         if not checkpoints:
             return None
