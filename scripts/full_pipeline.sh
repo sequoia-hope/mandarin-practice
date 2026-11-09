@@ -4,7 +4,7 @@
 
 set -e
 
-cd /home/sequoia/Software/mandarin
+cd "$(dirname "$0")/.."
 source venv/bin/activate
 
 LOG_FILE="pipeline_$(date +%Y%m%d_%H%M%S).log"

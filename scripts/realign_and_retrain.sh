@@ -2,7 +2,7 @@
 # Full pipeline: Extract segments with proper MFA alignments, extract features, retrain
 set -e
 
-cd /home/sequoia/Software/mandarin
+cd "$(dirname "$0")/.."
 source venv/bin/activate
 
 LOG_FILE="realign_pipeline_$(date +%Y%m%d_%H%M%S).log"

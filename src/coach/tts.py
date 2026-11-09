@@ -177,7 +177,7 @@ class QwenTTS(TTSBackend):
         self,
         model_path: str = "Qwen/Qwen3-TTS-12Hz-1.7B-Base",
         device: str = "cuda:0",
-        qwen_tts_dir: str = "/home/sequoia/Software/Qwen3-TTS",
+        qwen_tts_dir: Optional[str] = None,
         cache_dir: Optional[Path] = None,
         ref_audio_path: Optional[str] = None,
         ref_text: Optional[str] = None,
@@ -188,13 +188,18 @@ class QwenTTS(TTSBackend):
         Args:
             model_path: HuggingFace model path or local path
             device: Device to run on
-            qwen_tts_dir: Path to Qwen3-TTS repository
+            qwen_tts_dir: Path to Qwen3-TTS repository (default: $QWEN_TTS_DIR,
+                else ~/Software/Qwen3-TTS)
             cache_dir: Directory for caching generated audio
             ref_audio_path: Path to reference audio for voice cloning
             ref_text: Text spoken in reference audio
         """
         self.model_path = model_path
         self.device = device
+        if qwen_tts_dir is None:
+            qwen_tts_dir = os.environ.get(
+                "QWEN_TTS_DIR", str(Path.home() / "Software" / "Qwen3-TTS")
+            )
         self.qwen_tts_dir = Path(qwen_tts_dir)
         self.cache_dir = cache_dir or Path(tempfile.mkdtemp(prefix="qwen_tts_cache_"))
         self.cache_dir.mkdir(parents=True, exist_ok=True)
